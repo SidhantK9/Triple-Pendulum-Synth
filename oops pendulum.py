@@ -17,7 +17,7 @@ M_A = np.array([m1, m2, m3])
 # PENDULUM B (CHAOTIC TWIN - All rods set to 1.0 m) (Red)
 # Note: L_B[2] is now 2*m3 to make this system dynamically different from A.
 L_B = np.array([1.0, 1.0, 1.0]) 
-M_B = np.array([m1, m2, 2*m3])
+M_B = np.array([m1, m2, m3])
 
 # --- DISPLAY PARAMETERS (ADJUSTED FOR LARGER SCREEN AND MORE SPACE) ---
 SCALE = 100.0  # Scale factor for display
@@ -62,7 +62,7 @@ def calculate_energy(Y_in, L_in, M_in):
 #Y_initial_A = np.array([0, 0, 0, 0, 0, 0], dtype=float)    
 #Y_initial_B = np.array([0, 0, 0, 0, 0, 0], dtype=float)
 
-Y_initial_A = np.array([0.7854, 0.7854, 0.7854, 0.0, 0.0, 0.0], dtype=float)    
+Y_initial_A = np.array([0.7854, 0.7854, 0.7854 , 0.0, 0.0, 0.0], dtype=float)    
 Y_initial_B = np.array([0, -1.5708, 0.0, 0.0, 0.0, 0.0], dtype=float)
 
 # Global State now holds two pendulums: Y[0] is A, Y[1] is B
@@ -82,7 +82,7 @@ editing_pendulum_index = 0 # 0 for A (Blue), 1 for B (Red)
 # --- AUDIO GENERATOR ---
 
 sample_rate = 44100
-blocksize = 2 
+blocksize = 4096
 max_amp = 0.15 
 channels = 2
 phase_A = 0.0 # Separate phase for A
@@ -93,7 +93,7 @@ FREQ_BASELINE = 200.0
 FREQ_MAX_RANGE = 1800.0
 BASE_AMP = 0.05        
 MOD_FACTOR = 0.8        
-DUAL_VOL_SCALE = 0.6 # Scale volume down when both are active
+DUAL_VOL_SCALE = 0.8 # Scale volume down when both are active
 
 def wrap(angle):
     """Wraps any angle in radians to the range [-pi, pi]."""
@@ -101,18 +101,28 @@ def wrap(angle):
 
 # Function to map pendulum state to sound (returns [frequency, amp_L, amp_R])
 def map_state_to_sound(Y_snapshot):
-    th0, th1, th2 = Y_snapshot[0], Y_snapshot[1], Y_snapshot[2]
+    th0, th1, th2_raw = Y_snapshot[0], Y_snapshot[1], Y_snapshot[2]
+
+    # --- FIX: Wrap th2 for frequency calculation ---
+    # The raw th2 angle (th2_raw) can grow infinitely large.
+    # We must wrap it to the [-pi, pi] range to get the
+    # actual displacement from the vertical for sonification.
+    th2 = wrap(th2_raw)
+    # --- END FIX ---
     
     # 1. Frequency (linked to the angular position of the bottom bob, theta3)
-    displacement_factor = np.clip(abs(th2) / math.pi, 0.1, 1.0) 
-    freq = displacement_factor * FREQ_MAX_RANGE + FREQ_BASELINE
+    # Now, abs(th2) is correctly in the [0, pi] range,
+    # so dividing by math.pi gives the desired [0, 1] factor.
+    displacement_factor = np.clip(abs(th2) / math.pi, 0.02, 1.0) 
+    freq = displacement_factor * FREQ_MAX_RANGE 
     
     # 2. Amplitudes (linked to the angular position of bobs 1 and 2)
+    # These lines were already working correctly because math.sin() is
+    # periodic, so math.sin(th0) is identical to math.sin(wrap(th0)).
     amp_left = BASE_AMP + MOD_FACTOR * abs(math.sin(th0))
     amp_right = BASE_AMP + MOD_FACTOR * abs(math.sin(th1))
     
     return freq, amp_left, amp_right
-
 
 def audio_callback(outdata, frames, time_info, status):
     global Y, phase_A, phase_B, state_lock, audio_source_index
@@ -169,16 +179,9 @@ def audio_callback(outdata, frames, time_info, status):
             phase_B += (2.0 * math.pi * freq_B) / sample_rate
             if phase_B > 2.0 * math.pi: phase_B -= 2.0 * math.pi
             
-            sample_A = math.sin(phase_A)
-            sample_B = math.sin(phase_B)
             
-            # Mix and pan the two sources
-            # Pendulum A is slightly panned Left, Pendulum B is slightly panned Right
-            PAN_A = (0.7, 0.3)
-            PAN_B = (0.3, 0.7)
-            
-            sample_L = sample_A * amp_L_A * PAN_A[0] + sample_B * amp_L_B * PAN_B[0]
-            sample_R = sample_A * amp_R_A * PAN_A[1] + sample_B * amp_R_B * PAN_B[1]
+            sample_L = math.sin(phase_A) * amp_L_A  + math.sin(phase_B) * amp_L_B 
+            sample_R = math.sin(phase_A) * amp_R_A + math.sin(phase_B) * amp_R_B 
             
         tbuf[i, 0] = sample_L
         tbuf[i, 1] = sample_R
@@ -396,7 +399,7 @@ while running:
     # Using the carriage return '\r' to overwrite the previous line in a VS Code terminal
     output = (
         f"\rA (1.0m, m1,m2,m3) Angles (rad): T1={th_A[0]:.4f}, T2={th_A[1]:.4f}, T3={th_A[2]:.4f} | "
-        f"B (1.0m, m1,m2,2*m3) Angles (rad): T1={th_B[0]:.4f}, T2={th_B[1]:.4f}, T3={th_B[2]:.4f}   "
+        f"B (1.0m, m1,m2,m3) Angles (rad): T1={th_B[0]:.4f}, T2={th_B[1]:.4f}, T3={th_B[2]:.4f}   "
     )
     sys.stdout.write(output)
     sys.stdout.flush()
